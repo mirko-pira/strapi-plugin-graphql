@@ -187,7 +187,9 @@ const getPolicies = config => {
   policyFns.push(globalPolicy);
 
   if (strapi.plugins['users-permissions']) {
-    policies.unshift('plugins::users-permissions.permissions');
+    if(controller !== 'user' && action !== 'me'){
+      policies.unshift('plugins::users-permissions.permissions');
+    }
   }
 
   policies.forEach(policy => {
