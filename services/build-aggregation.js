@@ -494,9 +494,8 @@ const formatConnectionAggregator = function(fields, model, modelName) {
  *  }
  *
  */
-const formatModelConnectionsGQL = function({ fields, model: contentType, name, resolver }) {
-  const { globalId } = contentType;
-  const model = strapi.getModel(contentType.uid);
+const formatModelConnectionsGQL = function({ fields, model, name, resolver }) {
+  const { globalId } = model;
 
   const connectionGlobalId = `${globalId}Connection`;
 
@@ -515,6 +514,8 @@ const formatModelConnectionsGQL = function({ fields, model: contentType, name, r
   }
   modelConnectionTypes += groupByFormat.type;
 
+  const queryName = `${pluralName}Connection(sort: String, limit: Int, start: Int, where: JSON)`;
+
   const connectionResolver = buildQueryResolver(`${pluralName}Connection.values`, resolver);
 
   const connectionQueryName = `${pluralName}Connection`;
@@ -523,16 +524,7 @@ const formatModelConnectionsGQL = function({ fields, model: contentType, name, r
     globalId: connectionGlobalId,
     definition: modelConnectionTypes,
     query: {
-      [`${pluralName}Connection`]: {
-        args: {
-          sort: 'String',
-          limit: 'Int',
-          start: 'Int',
-          where: 'JSON',
-          ...(resolver.args || {}),
-        },
-        type: connectionGlobalId,
-      },
+      [queryName]: connectionGlobalId,
     },
     resolvers: {
       Query: {

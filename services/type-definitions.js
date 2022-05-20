@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * GraphQL.js service
+ *
+ * @description: A set of functions similar to controller's actions to avoid code duplication.
+ */
+
 const _ = require('lodash');
 const { contentTypes } = require('strapi-utils');
 
@@ -12,46 +18,16 @@ const DynamicZoneScalar = require('../types/dynamiczoneScalar');
 
 const { formatModelConnectionsGQL } = require('./build-aggregation');
 const types = require('./type-builder');
-const {
-  actionExists,
-  mergeSchemas,
-  convertToParams,
-  convertToQuery,
-  amountLimiting,
-  createDefaultSchema,
-} = require('./utils');
+const { mergeSchemas, convertToParams, convertToQuery, amountLimiting } = require('./utils');
 const { toSDL, getTypeDescription } = require('./schema-definitions');
 const { toSingular, toPlural } = require('./naming');
 const { buildQuery, buildMutation } = require('./resolvers-builder');
+const { actionExists } = require('./utils');
 
 const OPTIONS = Symbol();
 
-const FIND_QUERY_ARGUMENTS = {
-  sort: 'String',
-  limit: 'Int',
-  start: 'Int',
-  where: 'JSON',
-  publicationState: 'PublicationState',
-};
-
-const FIND_ONE_QUERY_ARGUMENTS = {
-  id: 'ID!',
-  publicationState: 'PublicationState',
-};
-
-/**
- * Builds a graphql schema from all the contentTypes & components loaded
- * @param {{ schema: object }} ctx
- * @returns {object}
- */
-const buildShadowCrud = ctx => {
-  const models = Object.values(strapi.contentTypes).filter(model => model.plugin !== 'admin');
-  const components = Object.values(strapi.components);
-
-  const allSchemas = buildModels([...models, ...components], ctx);
-
-  return mergeSchemas(createDefaultSchema(), ...allSchemas);
-};
+const FIND_QUERY_ARGUMENTS = `(sort: String, limit: Int, start: Int, where: JSON, publicationState: PublicationState)`;
+const FIND_ONE_QUERY_ARGUMENTS = `(id: ID!, publicationState: PublicationState)`;
 
 const assignOptions = (element, parent) => {
   if (Array.isArray(element)) {
@@ -65,20 +41,10 @@ const isQueryEnabled = (schema, name) => {
   return _.get(schema, `resolver.Query.${name}`) !== false;
 };
 
-const getQueryInfo = (schema, name) => {
-  return _.get(schema, `resolver.Query.${name}`, {});
-};
-
 const isMutationEnabled = (schema, name) => {
   return _.get(schema, `resolver.Mutation.${name}`) !== false;
 };
 
-const getMutationInfo = (schema, name) => {
-  return _.get(schema, `resolver.Mutation.${name}`, {});
-};
-
-const isTypeAttributeEnabled = (model, attr) =>
-  _.get(strapi.plugins.graphql, `config._schema.graphql.type.${model.globalId}.${attr}`) !== false;
 const isNotPrivate = _.curry((model, attributeName) => {
   return !contentTypes.isPrivateAttribute(model, attributeName);
 });
@@ -107,7 +73,6 @@ const buildTypeDefObj = model => {
 
   Object.keys(attributes)
     .filter(isNotPrivate(model))
-    .filter(attributeName => isTypeAttributeEnabled(model, attributeName))
     .forEach(attributeName => {
       const attribute = attributes[attributeName];
       // Convert our type to the GraphQL type.
@@ -122,7 +87,6 @@ const buildTypeDefObj = model => {
   associations
     .filter(association => association.type === 'collection')
     .filter(association => isNotPrivate(model, association.alias))
-    .filter(attributeName => isTypeAttributeEnabled(model, attributeName))
     .forEach(association => {
       typeDef[`${association.alias}(sort: String, limit: Int, start: Int, where: JSON)`] =
         typeDef[association.alias];
@@ -133,11 +97,9 @@ const buildTypeDefObj = model => {
   return typeDef;
 };
 
-const generateEnumDefinitions = (model, globalId) => {
-  const { attributes } = model;
+const generateEnumDefinitions = (attributes, globalId) => {
   return Object.keys(attributes)
     .filter(attribute => attributes[attribute].type === 'enumeration')
-    .filter(attribute => isTypeAttributeEnabled(model, attribute))
     .map(attribute => {
       const definition = attributes[attribute];
 
@@ -209,7 +171,6 @@ const buildAssocResolvers = model => {
 
   return associations
     .filter(association => isNotPrivate(model, association.alias))
-    .filter(association => isTypeAttributeEnabled(model, association.alias))
     .reduce((resolver, association) => {
       const target = association.model || association.collection;
       const targetModel = strapi.getModel(target, association.plugin);
@@ -317,7 +278,30 @@ const buildAssocResolvers = model => {
                 [`${targetPK}_in`]: targetIds.map(_.toString),
               };
 
-              return loader.load({ filters }).then(r => assignOptions(r, obj));
+              return loader.load({ filters }).then(r => {
+                try{
+                  if(association.alias === 'lessons'){
+                    for(let x in r){
+                      for(let i in obj[alias]){
+                        for(let n in obj[alias][i]){
+                          if(obj[alias][i].id === r[x].id){
+                            for(let y in r[x]){
+                              if(n === y && obj[alias][i][n] !== r[x][y]){
+                                r[x][y] = obj[alias][i][n];
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }catch(e){
+                  console.log('1001: ', e.message);
+                }
+
+                return assignOptions(r, obj)
+              });
+
             }
           };
           break;
@@ -333,7 +317,7 @@ const buildAssocResolvers = model => {
  *
  * @return Object
  */
-const buildModels = (models, ctx) => {
+const buildModels = models => {
   return models.map(model => {
     const { kind, modelType } = model;
 
@@ -343,9 +327,9 @@ const buildModels = (models, ctx) => {
 
     switch (kind) {
       case 'singleType':
-        return buildSingleType(model, ctx);
+        return buildSingleType(model);
       default:
-        return buildCollectionType(model, ctx);
+        return buildCollectionType(model);
     }
   });
 };
@@ -370,7 +354,7 @@ const buildModelDefinition = (model, globalType = {}) => {
     typeDefObj,
   };
 
-  schema.definition += generateEnumDefinitions(model, globalId);
+  schema.definition += generateEnumDefinitions(model.attributes, globalId);
   generateDynamicZoneDefinitions(model.attributes, globalId, schema);
 
   const description = getTypeDescription(globalType, model);
@@ -392,12 +376,14 @@ const buildComponent = component => {
   return schema;
 };
 
-const buildSingleType = (model, ctx) => {
+const buildSingleType = model => {
   const { uid, modelName } = model;
 
   const singularName = toSingular(modelName);
 
-  const globalType = _.get(ctx.schema, `type.${model.globalId}`, {});
+  const _schema = _.cloneDeep(_.get(strapi.plugins, 'graphql.config._schema.graphql', {}));
+
+  const globalType = _.get(_schema, `type.${model.globalId}`, {});
 
   const localSchema = buildModelDefinition(model, globalType);
 
@@ -406,32 +392,22 @@ const buildSingleType = (model, ctx) => {
     return localSchema;
   }
 
-  if (isQueryEnabled(ctx.schema, singularName)) {
-    const resolverOpts = {
+  if (isQueryEnabled(_schema, singularName)) {
+    const resolver = buildQuery(singularName, {
       resolver: `${uid}.find`,
-      ...getQueryInfo(ctx.schema, singularName),
-    };
+      ..._.get(_schema, `resolver.Query.${singularName}`, {}),
+    });
 
-    const resolver = buildQuery(singularName, resolverOpts);
-
-    const query = {
+    _.merge(localSchema, {
       query: {
-        [singularName]: {
-          args: {
-            publicationState: 'PublicationState',
-            ...(resolverOpts.args || {}),
-          },
-          type: model.globalId,
-        },
+        [`${singularName}(publicationState: PublicationState)`]: model.globalId,
       },
       resolvers: {
         Query: {
           [singularName]: wrapPublicationStateResolver(resolver),
         },
       },
-    };
-
-    _.merge(localSchema, query);
+    });
   }
 
   // Add model Input definition.
@@ -439,7 +415,7 @@ const buildSingleType = (model, ctx) => {
 
   // build every mutation
   ['update', 'delete'].forEach(action => {
-    const mutationSchema = buildMutationTypeDef({ model, action }, ctx);
+    const mutationSchema = buildMutationTypeDef({ model, action }, { _schema });
 
     mergeSchemas(localSchema, mutationSchema);
   });
@@ -447,13 +423,15 @@ const buildSingleType = (model, ctx) => {
   return localSchema;
 };
 
-const buildCollectionType = (model, ctx) => {
+const buildCollectionType = model => {
   const { plugin, modelName, uid } = model;
 
   const singularName = toSingular(modelName);
   const pluralName = toPlural(modelName);
 
-  const globalType = _.get(ctx.schema, `type.${model.globalId}`, {});
+  const _schema = _.cloneDeep(_.get(strapi.plugins, 'graphql.config._schema.graphql', {}));
+
+  const globalType = _.get(_schema, `type.${model.globalId}`, {});
 
   const localSchema = buildModelDefinition(model, globalType);
   const { typeDefObj } = localSchema;
@@ -463,65 +441,46 @@ const buildCollectionType = (model, ctx) => {
     return localSchema;
   }
 
-  if (isQueryEnabled(ctx.schema, singularName)) {
+  if (isQueryEnabled(_schema, singularName)) {
     const resolverOpts = {
       resolver: `${uid}.findOne`,
-      ...getQueryInfo(ctx.schema, singularName),
+      ..._.get(_schema, `resolver.Query.${singularName}`, {}),
     };
-
     if (actionExists(resolverOpts)) {
       const resolver = buildQuery(singularName, resolverOpts);
-
-      const query = {
+      _.merge(localSchema, {
         query: {
-          [singularName]: {
-            args: {
-              ...FIND_ONE_QUERY_ARGUMENTS,
-              ...(resolverOpts.args || {}),
-            },
-            type: model.globalId,
-          },
+          // TODO: support all the unique fields
+          [`${singularName}${FIND_ONE_QUERY_ARGUMENTS}`]: model.globalId,
         },
         resolvers: {
           Query: {
             [singularName]: wrapPublicationStateResolver(resolver),
           },
         },
-      };
-
-      _.merge(localSchema, query);
+      });
     }
   }
 
-  if (isQueryEnabled(ctx.schema, pluralName)) {
+  if (isQueryEnabled(_schema, pluralName)) {
     const resolverOpts = {
       resolver: `${uid}.find`,
-      ...getQueryInfo(ctx.schema, pluralName),
+      ..._.get(_schema, `resolver.Query.${pluralName}`, {}),
     };
-
     if (actionExists(resolverOpts)) {
       const resolver = buildQuery(pluralName, resolverOpts);
-
-      const query = {
+      _.merge(localSchema, {
         query: {
-          [pluralName]: {
-            args: {
-              ...FIND_QUERY_ARGUMENTS,
-              ...(resolverOpts.args || {}),
-            },
-            type: `[${model.globalId}]`,
-          },
+          [`${pluralName}${FIND_QUERY_ARGUMENTS}`]: `[${model.globalId}]`,
         },
         resolvers: {
           Query: {
             [pluralName]: wrapPublicationStateResolver(resolver),
           },
         },
-      };
+      });
 
-      _.merge(localSchema, query);
-
-      if (isQueryEnabled(ctx.schema, `${pluralName}Connection`)) {
+      if (isQueryEnabled(_schema, `${pluralName}Connection`)) {
         // Generate the aggregation for the given model
         const aggregationSchema = formatModelConnectionsGQL({
           fields: typeDefObj,
@@ -541,7 +500,7 @@ const buildCollectionType = (model, ctx) => {
 
   // build every mutation
   ['create', 'update', 'delete'].forEach(action => {
-    const mutationSchema = buildMutationTypeDef({ model, action }, ctx);
+    const mutationSchema = buildMutationTypeDef({ model, action }, { _schema });
     mergeSchemas(localSchema, mutationSchema);
   });
 
@@ -551,15 +510,14 @@ const buildCollectionType = (model, ctx) => {
 // TODO:
 // - Implement batch methods (need to update the content-manager as well).
 // - Implement nested transactional methods (create/update).
-const buildMutationTypeDef = ({ model, action }, ctx) => {
+const buildMutationTypeDef = ({ model, action }, { _schema }) => {
   const capitalizedName = _.upperFirst(toSingular(model.modelName));
   const mutationName = `${action}${capitalizedName}`;
 
   const resolverOpts = {
     resolver: `${model.uid}.${action}`,
     transformOutput: result => ({ [toSingular(model.modelName)]: result }),
-    ...getMutationInfo(ctx.schema, mutationName),
-    isShadowCrud: true,
+    ..._.get(_schema, `resolver.Mutation.${mutationName}`, {}),
   };
 
   if (!actionExists(resolverOpts)) {
@@ -574,7 +532,7 @@ const buildMutationTypeDef = ({ model, action }, ctx) => {
   });
 
   // ignore if disabled
-  if (!isMutationEnabled(ctx.schema, mutationName)) {
+  if (!isMutationEnabled(_schema, mutationName)) {
     return {
       definition,
     };
@@ -582,24 +540,15 @@ const buildMutationTypeDef = ({ model, action }, ctx) => {
 
   const { kind } = model;
 
-  const args = {};
-
-  if (kind !== 'singleType' || action !== 'delete') {
-    Object.assign(args, {
-      input: `${mutationName}Input`,
-    });
+  let mutationDef = `${mutationName}(input: ${mutationName}Input)`;
+  if (kind === 'singleType' && action === 'delete') {
+    mutationDef = mutationName;
   }
 
   return {
     definition,
     mutation: {
-      [mutationName]: {
-        args: {
-          ...args,
-          ...(resolverOpts.args || {}),
-        },
-        type: `${mutationName}Payload`,
-      },
+      [mutationDef]: `${mutationName}Payload`,
     },
     resolvers: {
       Mutation: {
@@ -609,4 +558,6 @@ const buildMutationTypeDef = ({ model, action }, ctx) => {
   };
 };
 
-module.exports = buildShadowCrud;
+module.exports = {
+  buildModels,
+};

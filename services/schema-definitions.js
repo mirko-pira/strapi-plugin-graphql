@@ -71,36 +71,12 @@ const fieldsToSDL = ({ fields, configurations, model }) => {
 const operationToSDL = ({ fields, configurations }) => {
   return Object.entries(fields)
     .map(([key, value]) => {
-      if (typeof value === 'string') {
-        const [attr] = key.split('(');
-        const attributeName = _.trim(attr);
+      const [attr] = key.split('(');
+      const attributeName = _.trim(attr);
 
-        return applyMetadatas(`${key}: ${value}`, configurations[attributeName]);
-      } else {
-        const { args = {}, type } = value;
-
-        const query = `${key}${argumentsToSDL(args)}: ${type}`;
-        return applyMetadatas(query, configurations[key]);
-      }
+      return applyMetadatas(`${key}: ${value}`, configurations[attributeName]);
     })
     .join('\n');
-};
-
-/**
- * Converts an object of arguments into graphql SDL
- * @param {object} args arguments
- * @returns {string}
- */
-const argumentsToSDL = args => {
-  if (_.isEmpty(args)) {
-    return '';
-  }
-
-  const sdlArgs = Object.entries(args)
-    .map(([key, value]) => `${key}: ${value}`)
-    .join(', ');
-
-  return `(${sdlArgs})`;
 };
 
 /**
